@@ -1,11 +1,13 @@
-import os, collections, logging, re, heapq
+import os, collections, logging, re, heapq, sys
 import downloader
 
 _LOGGER = logging.getLogger(__name__)
 
 ROOT_DIR = os.path.dirname(__file__)
 
-YEARS = range(2015, 2009, -1)
+MATCHES_LIMIT = 7500
+
+YEARS = range(2015, 2006, -1)
 STALE = 9999
 
 DATE_RE = re.compile(r'\d{4}-[01]\d-[0123]\d')
@@ -86,36 +88,28 @@ def match_handler(crawl_element):
 		for team_index in [0, 1]:
 			for player_index in xrange(1, 12):
 				if team_index == 0:
-					try:
-						player_elem = crawl_element.xpath_one(
-							"//div[2]/div[3]/div[2]"
-							"/div[@class='aufstellung-spieler-container' "
-							"and @style][%s]"
-							"/div[2]/span/a" % player_index,
-						)
-					except downloader.UnexpectedContentException as e:
-						player_elem = crawl_element.xpath_one(
-							"(//div[2][@class='large-6 columns aufstellung-box']"
-							"/div[@class='large-7 columns']/table"
-							"//tr/td/a[@class='spielprofil_tooltip' and @id])[%s]"
-							% player_index
-						)
+					player_elem = crawl_element.xpath_pick_one([
+						"//div[2]/div[3]/div[2]"
+						"/div[@class='aufstellung-spieler-container' "
+						"and @style][%s]"
+						"/div[2]/span/a" % player_index,
+						"(//div[2]"
+						"/div/table"
+						"//tr/td/a[@class='spielprofil_tooltip' and @id])[%s]"
+						% player_index
+					])
 				elif team_index == 1:
-					try:
-						player_elem = crawl_element.xpath_one(
-							"//div[3]/div[3]/div[2]"
-							"/div[@class='aufstellung-spieler-container' "
-							"and @style][%s]"
-							"/div[2]/span/a"
-							% player_index,
-						)
-					except downloader.UnexpectedContentException as e:
-						player_elem = crawl_element.xpath_one(
-							"(//div[3][@class='large-6 columns']"
-							"/div[@class='large-7 columns']/table"
-							"//tr/td/a[@class='spielprofil_tooltip' and @id])[%s]"
-							% player_index
-						)
+					player_elem = crawl_element.xpath_pick_one([
+						"//div[3]/div[3]/div[2]"
+						"/div[@class='aufstellung-spieler-container' "
+						"and @style][%s]"
+						"/div[2]/span/a"
+						% player_index,
+						"(//div[3]"
+						"/div/table"
+						"//tr/td/a[@class='spielprofil_tooltip' and @id])[%s]"
+						% player_index
+					])
 				href = player_elem.element.get('href')
 				player_id = href.split('/')[3]
 				player_id += '.'
@@ -142,12 +136,29 @@ def match_handler(crawl_element):
 	if len(matches) % 25 == 0:
 		print 'Matches so far:', len(matches)
 		print 'Last match:', matches[-1]
+	
+	if len(matches) >= MATCHES_LIMIT:
+		export()
+		sys.exit(0)
 
 	return
 
-if __name__ == '__main__':
-	logging.basicConfig(level = logging.INFO)
+def export():
+	matches.sort(key = lambda ma: ma['date'])
+	with open('matches.csv', 'wb') as outf:
+		for ma in matches:
+			outf.write(';'.join([
+				ma['date'],
+				ma['teams'][0],
+				ma['teams'][1],
+				ma['score'][0],
+				ma['score'][1],
+				','.join(ma['lineups'][0]),
+				','.join(ma['lineups'][1]),
+			]))
+			outf.write('\n')
 
+def crawl():
 	db_path = os.path.join(ROOT_DIR, 'pages.db')
 
 	crawler = downloader.Crawler(
@@ -155,6 +166,12 @@ if __name__ == '__main__':
 		downloader.CrawlURL(
 			'http://www.transfermarkt.com/?seo=wettbewerbe&plus=1', STALE),
 		db_path,
-		[.2, 7]
+		[.2, 5]
 	)
 	crawler.crawl()
+
+if __name__ == '__main__':
+	logging.basicConfig(level = logging.INFO)
+
+	crawl()
+
