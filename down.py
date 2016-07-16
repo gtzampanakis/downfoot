@@ -5,9 +5,9 @@ _LOGGER = logging.getLogger(__name__)
 
 ROOT_DIR = os.path.dirname(__file__)
 
-MATCHES_LIMIT = 7500
+MATCHES_LIMIT = 500000
 
-YEARS = range(2015, 2006, -1)
+YEARS = range(2015, 2003, -1)
 STALE = 9999
 
 DATE_RE = re.compile(r'\d{4}-[01]\d-[0123]\d')
@@ -44,6 +44,9 @@ def comp_handler(crawl_element):
 
 def match_handler(crawl_element):
 	result = collections.defaultdict(list)
+
+	if crawl_element.xpath("//div[text() = '(uncontested)']"):
+		return
 
 	date_elem = crawl_element.xpath_one(
 		"//div/div/div/div/p[@class='sb-datum hide-for-small']/a[2]"
