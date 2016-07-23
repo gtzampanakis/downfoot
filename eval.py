@@ -8,7 +8,9 @@ NCHUNKS = 25
 
 ROOT_DIR = os.path.dirname(__file__)
 
-PLAYER_TO_TRACK = 'cristiano-ronaldo'
+PLAYER_TO_TRACK = 'gyorgy-sandor'
+
+N = 10000
 
 K = .05
 H = .35
@@ -46,10 +48,14 @@ def get_conn():
 conn = get_conn()
 
 results = conn.execute('''
-	select id, match_json
-	from matches
+	select id, match_json from (
+		select id, match_json, date
+		from matches
+		order by date desc
+		limit ?
+	)
 	order by date
-''')
+''', [N])
 
 for row in results:
 	ma_id = row[0]
@@ -58,11 +64,22 @@ for row in results:
 	from_id[ma_id] = ma
 	matches.append(ma)
 
-rmap = collections.defaultdict(lambda: DEFAULT_RATING)
+rmap = { }
 total_error = 0.
 
-for ma in matches:
+for mai, ma in enumerate(matches, 1):
 	
+	default_ratings = [
+		util.avg([
+			rmap[p] for p in l if p in rmap
+		] or [0])
+		for l in ma['lineups']]
+
+	for l, defr in zip(ma['lineups'], default_ratings):
+		for p in l:
+			if p not in rmap:
+				rmap[p] = defr
+
 	ratings = [[rmap[p] for p in l] for l in ma['lineups']]
 	teams_ratings = [sum(rr) for rr in ratings]
 
@@ -98,7 +115,7 @@ for ma in matches:
 for p in sorted(rmap.keys(), key = lambda p: -rmap[p])[:1500]:
 	print '%s    %.3f' % (p.split('.')[0], rmap[p])
 
-print 'Total error: %s' % total_error
+print 'Avg abs error: %.3f' % (total_error / float(mai))
 
 chunk_size = len(matches) / NCHUNKS
 
