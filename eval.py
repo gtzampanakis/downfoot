@@ -1,11 +1,13 @@
 import collections, uuid, json, sqlite3, os, itertools
+import numpy as np
 import scipy as sp
 import scipy.optimize as spo
 import scipy.sparse as sps
-
-import util
+import scipy.sparse.linalg as spsl
 
 DEFAULT_RATING = 0.
+
+PS_PER_TEAM = 11
 
 NCHUNKS = 25
 
@@ -13,7 +15,7 @@ ROOT_DIR = os.path.dirname(__file__)
 
 PLAYER_TO_TRACK = 'gyorgy-sandor'
 
-N = 1000
+N = 279527849
 
 K = .05
 H = .35
@@ -73,8 +75,19 @@ matches = [
 	m for m in matches
 	if  len(set(
 		m['lineups'][0] + m['lineups'][1]
-	)) == 22
+	)) == PS_PER_TEAM * 2
 ]
+
+# matches = [
+# 		{
+# 			'lineups': ['a', 'b'],
+# 			'score':   [  0,   3],
+# 		},
+# 		{
+# 			'lineups': ['a', 'b'],
+# 			'score':   [  2,   0],
+# 		},
+# ]
 
 N = len(matches)
 
@@ -83,10 +96,12 @@ p2i = { }
 i2p = { }
 rlist = [ ]
 obssuplist = [ ]
+p2e = collections.defaultdict(int)
 
 for mai, ma in enumerate(matches):
 
 	for p in itertools.chain(*ma['lineups']):
+		p2e[p] += 1
 		if p not in p2i:
 			i = len(plist)
 			plist.append(p)
@@ -113,8 +128,8 @@ A = sps.lil_matrix((N+1, R.size))
 
 for mai, ma in enumerate(matches):
 	for li, l in zip([1,-1], ma['lineups']):
-		assert len(l) == 11
-		assert len(set(l)) == 11
+		assert len(l) == PS_PER_TEAM
+		assert len(set(l)) == PS_PER_TEAM
 		for p in l:
 			A[mai, p2i[p]] = li
 
@@ -127,18 +142,21 @@ HM = sp.ones(N+1) * H
 
 assert A[:N,:].sum() == 0
 
-def errf(Rin):
-	res = abs(A * Rin + HM - SO).sum() * 1./N
-	print Rin.sum(), res
-	return
+res = spsl.lsqr(A, SO - HM, show=True)
 
-import scipy.sparse.linalg as spsl
+R = res[0]
 
-spsl.lsqr(A, SO - H)
+inds = np.argsort(R)
 
-import scipy.optimize as so
+nprinted = 0
+for ind in reversed(inds):
+	exp = p2e[i2p[ind]]
+	if exp >= 80:
+		print i2p[ind], '    ', exp, R[ind]
+		nprinted += 1
+	if nprinted >= 5000:
+		break
 
-res = spo.fmin(errf, x0=R, disp=1)
+print 'N', N
 
-print res
 
