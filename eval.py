@@ -15,7 +15,7 @@ ROOT_DIR = os.path.dirname(__file__)
 
 PLAYER_TO_TRACK = 'gyorgy-sandor'
 
-N = 279527849
+N = 500000
 
 K = .05
 H = .35
@@ -112,9 +112,6 @@ for mai, ma in enumerate(matches):
 	obs_sup = ma['score'][0] - ma['score'][1]
 	obssuplist.append(obs_sup)
 
-# To accommodate the final all-ones A column.
-obssuplist.append(H)
-
 # Column vector of ratings.
 R = sp.array(rlist)
 
@@ -123,7 +120,7 @@ SO = sp.array(obssuplist)
 
 # Matrix of appearances. Columns are players, rows are matches.
 # First using lil_matrix because it allows to build incrementally.
-A = sps.lil_matrix((N+1, R.size))
+A = sps.lil_matrix((N, R.size))
 
 
 for mai, ma in enumerate(matches):
@@ -133,16 +130,26 @@ for mai, ma in enumerate(matches):
 		for p in l:
 			A[mai, p2i[p]] = li
 
-A[N,:] = sp.ones((1,R.size))
-
 # Now convert to CSC format for faster operations.
 A = A.tocsr()
 
-HM = sp.ones(N+1) * H
+HM = sp.ones(N) * H
 
-assert A[:N,:].sum() == 0
+assert A.sum() == 0
 
-res = spsl.lsqr(A, SO - HM, show=True)
+##############################################
+##############################################
+##############################################
+##############################################
+##############################################
+##############################################
+res = spsl.lsqr(A, SO - HM, damp=N/1000., show=True)
+##############################################
+##############################################
+##############################################
+##############################################
+##############################################
+##############################################
 
 R = res[0]
 
@@ -151,8 +158,8 @@ inds = np.argsort(R)
 nprinted = 0
 for ind in reversed(inds):
 	exp = p2e[i2p[ind]]
-	if exp >= 80:
-		print i2p[ind], '    ', exp, R[ind]
+	if exp >= 0:
+		print '%s    %d    %.3f' % (i2p[ind], exp, R[ind])
 		nprinted += 1
 	if nprinted >= 5000:
 		break
