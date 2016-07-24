@@ -1,4 +1,7 @@
-import collections, uuid, json, sqlite3, os
+import collections, uuid, json, sqlite3, os, itertools
+import scipy as sp
+import scipy.optimize as spo
+import scipy.sparse as sps
 
 import util
 
@@ -10,7 +13,7 @@ ROOT_DIR = os.path.dirname(__file__)
 
 PLAYER_TO_TRACK = 'gyorgy-sandor'
 
-N = 10000
+N = 100
 
 K = .05
 H = .35
@@ -64,90 +67,92 @@ for row in results:
 	from_id[ma_id] = ma
 	matches.append(ma)
 
-rmap = { }
-total_error = 0.
+# Discard all matches that do not have 22 distinct players, for whatever
+# reason.
+matches = [
+	m for m in matches
+	if  len(set(
+		m['lineups'][0] + m['lineups'][1]
+	)) == 22
+]
 
-for mai, ma in enumerate(matches, 1):
-	
-	default_ratings = [
-		util.avg([
-			rmap[p] for p in l if p in rmap
-		] or [0])
-		for l in ma['lineups']]
+N = len(matches)
 
-	for l, defr in zip(ma['lineups'], default_ratings):
-		for p in l:
-			if p not in rmap:
-				rmap[p] = defr
+plist = [ ]
+p2i = { }
+i2p = { }
+rlist = [ ]
+obssuplist = [ ]
+expsuplist = [ ]
 
-	ratings = [[rmap[p] for p in l] for l in ma['lineups']]
-	teams_ratings = [sum(rr) for rr in ratings]
+for mai, ma in enumerate(matches):
 
-	exp_sup = teams_ratings[0] - teams_ratings[1] + H
-	print (
-		'%s %s %.3f-%.3f %.3f' % (
-			ma['teams'], ma['date'], teams_ratings[0], teams_ratings[1], exp_sup
-		)
-	)
+	for p in itertools.chain(*ma['lineups']):
+		if p not in p2i:
+			i = len(plist)
+			plist.append(p)
+			rlist.append(DEFAULT_RATING)
+			p2i[p] = i
+			i2p[i] = p
+
 	obs_sup = ma['score'][0] - ma['score'][1]
+	obssuplist.append(obs_sup)
 
-	error = obs_sup - exp_sup
-	total_error += abs(error)
-	correction = error * K
-	correction_per_player = correction / 11.
+R = sp.array(rlist)
 
-	ma['sum_team_ratings'] = sum(teams_ratings)
-	ma['team_ratings'] = teams_ratings
-	ma['exp_sup'] = exp_sup
-	ma['obs_sup'] = obs_sup
-	ma['abs_error'] = abs(error)
-	ma['abs_error_of_dumb'] = abs(obs_sup - H)
+# Row vector of observed superiorities.
+SO = sp.array(obssuplist)
 
-	for p in ma['lineups'][0]:
-		if p.split('.')[0] == PLAYER_TO_TRACK:
-			print 'TRACKING (%s): %.3f' % (p.split('.')[0], rmap[p])
-		rmap[p] += correction_per_player
-	for p in ma['lineups'][1]:
-		if p.split('.')[0] == PLAYER_TO_TRACK:
-			print 'TRACKING (%s): %.3f' % (p.split('.')[0], rmap[p])
-		rmap[p] -= correction_per_player
+# Matrix of appearances. Columns are matches, rows are players.
+# First using lil_matrix because it allows to build incrementally.
+A = sps.lil_matrix((R.size, N))
 
-for p in sorted(rmap.keys(), key = lambda p: -rmap[p])[:1500]:
-	print '%s    %.3f' % (p.split('.')[0], rmap[p])
+for mai, ma in enumerate(matches):
+	for li, l in zip([1,-1], ma['lineups']):
+		assert len(l) == 11
+		assert len(set(l)) == 11
+		for p in l:
+			A[p2i[p], mai] = li
 
-print 'Avg abs error: %.3f' % (total_error / float(mai))
+# Now convert to CSC format for faster operations.
+A = A.tocsc()
 
-chunk_size = len(matches) / NCHUNKS
+HM = sp.ones(N) * H
 
+assert A.sum() == 0
 
-to_chunkify = sorted(matches, 
-					 key = lambda ma: ma['exp_sup'])
-to_chunkify = [obj['id'] for obj in to_chunkify]
+def errf(Rin):
+	res = abs(Rin * A + HM - SO).sum() * 1./N
+	print Rin.sum(), res
+	return
 
-chunks = util.chunkify(to_chunkify, chunk_size)
+def errf_dis(rlist):
 
-print
-for chunk in chunks:
-	avg_exp = util.avg([from_id[id]['exp_sup'] for id in chunk])
-	avg_err_d = util.avg([from_id[id]['abs_error_of_dumb'] for id in chunk])
-	avg_err = util.avg([from_id[id]['abs_error'] for id in chunk])
-	n = len(chunk)
-	to_print = '%s %.3f %.3f %.3f' % (n, avg_exp, avg_err_d, avg_err)
-	print to_print
+	total_error = 0.
 
+	def p2r(p):
+		return rlist[p2i[p]]
 
-to_chunkify = sorted(matches, 
-					 key = lambda ma: ma['sum_team_ratings'])
-to_chunkify = [obj['id'] for obj in to_chunkify]
+	for mai, ma in enumerate(matches):
 
-chunks = util.chunkify(to_chunkify, chunk_size)
+		ratings = [[p2r(p) for p in l] for l in ma['lineups']]
+		teams_ratings = [sum(rr) for rr in ratings]
 
-print
-for chunk in chunks:
-	avg_sum = util.avg([from_id[id]['sum_team_ratings'] for id in chunk])
-	avg_err_d = util.avg([from_id[id]['abs_error_of_dumb'] for id in chunk])
-	avg_err = util.avg([from_id[id]['abs_error'] for id in chunk])
-	n = len(chunk)
-	to_print = '%s %.3f %.3f %.3f' % (n, avg_sum, avg_err_d, avg_err)
-	print to_print
+		exp_sup = teams_ratings[0] - teams_ratings[1] + H
+		expsuplist.append(exp_sup)
+
+		error = abs(obs_sup - exp_sup)
+
+		total_error += error
+		
+	avg_err = (total_error / float(mai))
+	print 'Avg error: %.8f' % avg_err
+
+	return avg_err
+
+import scipy.optimize as so
+
+res = spo.fmin(errf, x0=R, disp=1)
+
+print res
 
