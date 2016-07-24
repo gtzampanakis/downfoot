@@ -13,7 +13,7 @@ ROOT_DIR = os.path.dirname(__file__)
 
 PLAYER_TO_TRACK = 'gyorgy-sandor'
 
-N = 100
+N = 1000
 
 K = .05
 H = .35
@@ -83,7 +83,6 @@ p2i = { }
 i2p = { }
 rlist = [ ]
 obssuplist = [ ]
-expsuplist = [ ]
 
 for mai, ma in enumerate(matches):
 
@@ -98,57 +97,44 @@ for mai, ma in enumerate(matches):
 	obs_sup = ma['score'][0] - ma['score'][1]
 	obssuplist.append(obs_sup)
 
+# To accommodate the final all-ones A column.
+obssuplist.append(H)
+
+# Column vector of ratings.
 R = sp.array(rlist)
 
-# Row vector of observed superiorities.
+# Column vector of observed superiorities.
 SO = sp.array(obssuplist)
 
-# Matrix of appearances. Columns are matches, rows are players.
+# Matrix of appearances. Columns are players, rows are matches.
 # First using lil_matrix because it allows to build incrementally.
-A = sps.lil_matrix((R.size, N))
+A = sps.lil_matrix((N+1, R.size))
+
 
 for mai, ma in enumerate(matches):
 	for li, l in zip([1,-1], ma['lineups']):
 		assert len(l) == 11
 		assert len(set(l)) == 11
 		for p in l:
-			A[p2i[p], mai] = li
+			A[mai, p2i[p]] = li
+
+A[N,:] = sp.ones((1,R.size))
 
 # Now convert to CSC format for faster operations.
-A = A.tocsc()
+A = A.tocsr()
 
-HM = sp.ones(N) * H
+HM = sp.ones(N+1) * H
 
-assert A.sum() == 0
+assert A[:N,:].sum() == 0
 
 def errf(Rin):
-	res = abs(Rin * A + HM - SO).sum() * 1./N
+	res = abs(A * Rin + HM - SO).sum() * 1./N
 	print Rin.sum(), res
 	return
 
-def errf_dis(rlist):
+import scipy.sparse.linalg as spsl
 
-	total_error = 0.
-
-	def p2r(p):
-		return rlist[p2i[p]]
-
-	for mai, ma in enumerate(matches):
-
-		ratings = [[p2r(p) for p in l] for l in ma['lineups']]
-		teams_ratings = [sum(rr) for rr in ratings]
-
-		exp_sup = teams_ratings[0] - teams_ratings[1] + H
-		expsuplist.append(exp_sup)
-
-		error = abs(obs_sup - exp_sup)
-
-		total_error += error
-		
-	avg_err = (total_error / float(mai))
-	print 'Avg error: %.8f' % avg_err
-
-	return avg_err
+spsl.lsqr(A, SO - H)
 
 import scipy.optimize as so
 
