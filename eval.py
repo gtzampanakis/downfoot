@@ -19,7 +19,19 @@ class Evaluator:
 			setattr(self, key, val)
 		self.pars = pars
 
-	def evaluate(self):
+	def predict(self, match):
+		assert self.trained
+		teams_ratings = [
+				sum(
+					self.p2r.get(p, DEFAULT_RATING)
+					for p in l
+				)
+				for l in match['lineups']
+		]
+		exp_sup = teams_ratings[0] - teams_ratings[1] + self.H
+		return exp_sup
+
+	def train(self):
 
 		N = len(self.matches)
 
@@ -48,14 +60,14 @@ class Evaluator:
 			obs_sup = ma['score'][0] - ma['score'][1]
 			obssuplist.append(obs_sup)
 
-# Column vector of ratings.
+		# Column vector of ratings.
 		R = sp.array(rlist)
 
-# Column vector of observed superiorities.
+		# Column vector of observed superiorities.
 		SO = sp.array(obssuplist)
 
-# Matrix of appearances. Columns are players, rows are matches.
-# First using lil_matrix because it allows to build incrementally.
+		# Matrix of appearances. Columns are players, rows are matches.  First
+		# using lil_matrix because it allows to build incrementally.
 		A = sps.lil_matrix((N, R.size))
 
 
@@ -66,7 +78,7 @@ class Evaluator:
 				for p in l:
 					A[mai, p2i[p]] = li
 
-# Now convert to CSC format for faster operations.
+		# Now convert to CSC format for faster operations.
 		A = A.tocsr()
 
 		HM = sp.ones(N) * H
@@ -76,13 +88,7 @@ class Evaluator:
 		##############################################
 		##############################################
 		##############################################
-		##############################################
-		##############################################
-		##############################################
 		res = spsl.lsqr(A, SO - HM, damp=N/1000., show=True)
-		##############################################
-		##############################################
-		##############################################
 		##############################################
 		##############################################
 		##############################################
@@ -103,22 +109,16 @@ class Evaluator:
 				break
 
 		output = { }
-		p2r = { }
+		self.p2r = { }
 		
 		for p, i in p2i.iteritems():
-			p2r[p] = R[p2i[p]]
+			self.p2r[p] = R[p2i[p]]
 
-		output['err'] = err
-		output['p2r'] = p2r
+		self.trained = True
 
-		return output
-
-def main():
+def get_matches():
 
 	lim = 1000
-
-	pK = .05
-	pH = .35
 
 	matches = [ ]
 
@@ -164,9 +164,16 @@ def main():
 # 		},
 # ]
 
+	return matches
 
-	evaluator = Evaluator(matches, H = pH)
-	return evaluator.evaluate()
+def cross_validate():
+
+	pH = .35
+
+	full_matches = get_matches()
+
+	evaluator = Evaluator(full_matches, H = pH)
+	evaluator.train()
 
 if __name__ == '__main__':
-	main()
+	cross_validate()
