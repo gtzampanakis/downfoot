@@ -1,13 +1,21 @@
-import collections, uuid, json, sqlite3, os, itertools
+import collections, uuid, json, sqlite3, os, itertools, random
 import numpy as np
 import scipy as sp
 import scipy.optimize as spo
 import scipy.sparse as sps
 import scipy.sparse.linalg as spsl
 
+import util
+
 DEFAULT_RATING = 0.
 
 PS_PER_TEAM = 11
+
+NPRINT = 0
+
+SE_THRESHOLD = .01
+
+LIM = 2000
 
 ROOT_DIR = os.path.dirname(__file__)
 
@@ -36,6 +44,7 @@ class Evaluator:
 		N = len(self.matches)
 
 		H = self.pars['H']
+		D = self.pars['D']
 
 		matches = self.matches
 
@@ -88,7 +97,7 @@ class Evaluator:
 		##############################################
 		##############################################
 		##############################################
-		res = spsl.lsqr(A, SO - HM, damp=N/1000., show=True)
+		res = spsl.lsqr(A, SO - HM, damp=N/D, show=True)
 		##############################################
 		##############################################
 		##############################################
@@ -101,12 +110,12 @@ class Evaluator:
 
 		nprinted = 0
 		for ind in reversed(inds):
+			if nprinted >= NPRINT:
+				break
 			exp = p2e[i2p[ind]]
 			if exp >= 0:
 				print '%s    %d    %.3f' % (i2p[ind], exp, R[ind])
 				nprinted += 1
-			if nprinted >= 100:
-				break
 
 		output = { }
 		self.p2r = { }
@@ -117,8 +126,6 @@ class Evaluator:
 		self.trained = True
 
 def get_matches():
-
-	lim = 1000
 
 	matches = [ ]
 
@@ -136,7 +143,7 @@ def get_matches():
 			limit ?
 		)
 		order by date
-	''', [lim])
+	''', [LIM])
 
 	for row in results:
 		ma_id = row[0]
@@ -166,14 +173,49 @@ def get_matches():
 
 	return matches
 
-def cross_validate():
+def cross_validate(pars):
 
 	pH = .35
 
+	pD = pars[0]
+
 	full_matches = get_matches()
 
-	evaluator = Evaluator(full_matches, H = pH)
-	evaluator.train()
+	N = len(full_matches)
+
+	errs = [ ]
+	for repi in itertools.count(1):
+		test_index = random.randint(0, N-1)
+		test_match = full_matches[test_index]
+		train_matches = [
+				ma for mai, ma in enumerate(full_matches)
+				if mai != test_index
+		]
+
+		evaluator = Evaluator(train_matches, H = pH, D = pD)
+		evaluator.train()
+
+		prediction = evaluator.predict(test_match)
+		observed = test_match['score'][0] - test_match['score'][1]
+
+		err = abs(prediction - observed)
+
+		errs.append(err)
+
+		mean_err = sp.mean(errs)
+		std = sp.std(errs)
+
+		se = std / len(errs)**.5
+
+		print '*** %d %s %.3f %.4f' % (repi, pars, mean_err, se)
+
+		if len(errs) > 1 and se < SE_THRESHOLD:
+			return mean_err
 
 if __name__ == '__main__':
-	cross_validate()
+	res = spo.fmin(
+			cross_validate,
+			x0 = [1000.]
+	)
+	print res
+	import pdb; pdb.set_trace()
