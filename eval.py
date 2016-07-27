@@ -13,7 +13,9 @@ PS_PER_TEAM = 11
 
 NPRINT = 0
 
-SE_THRESHOLD = .01
+SE_THRESHOLD = .02
+
+INIT_MATCHES = 10000
 
 LIM = 40000
 
@@ -22,6 +24,7 @@ ROOT_DIR = os.path.dirname(__file__)
 class Evaluator:
 
 	def __init__(self, matches, **pars):
+		print 'Evaluator created with pars: %s' % pars
 		self.matches = matches
 		for key, val in pars.iteritems():
 			setattr(self, key, val)
@@ -189,7 +192,8 @@ def cross_validate(pars):
 	evaluator = Evaluator(full_matches, H = pH, D = pD)
 
 	errs = [ ]
-	for mai in xrange(len(full_matches)):
+	for mai in xrange(INIT_MATCHES, len(full_matches)):
+
 		test_match = full_matches[mai]
 
 		evaluator.train(mai)
@@ -206,17 +210,20 @@ def cross_validate(pars):
 
 		se = std / len(errs)**.5
 
-		print '*** %d %s %.3f %.4f' % (mai, pars, mean_err, se)
+		if mai % 50 == 0:
+			print '*** %d %s %.3f %.4f' % (mai, pars, mean_err, se)
 
 		if len(errs) > 1 and se < SE_THRESHOLD:
+			print mean_err
 			return mean_err
 	
+	print mean_err
 	return mean_err
 
 if __name__ == '__main__':
 	res = spo.fmin(
 			cross_validate,
-			x0 = [1000.]
+			x0 = [10.]
 	)
 	print res
 	import pdb; pdb.set_trace()
