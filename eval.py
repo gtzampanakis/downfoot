@@ -17,34 +17,10 @@ PLAYER_TO_TRACK = 'gyorgy-sandor'
 
 N = 500000
 
-K = .05
 H = .35
-T = 20
-M = 1
 
 matches = [ ]
 from_id = { }
-# with open('matches.froz.csv') as inf:
-# 	for row in inf:
-# 		row = row.strip()
-# 		date, team1, team2, score1, score2, lineup1, lineup2 = row.split(';')
-# 		lineup1 = lineup1.split(',')
-# 		lineup2 = lineup2.split(',')
-# 		ma = dict(
-# 			id = uuid.uuid4().hex,
-# 			date = date,
-# 			teams = [team1, team2],
-# 			team1 = team1,
-# 			team2 = team2,
-# 			scores = [int(score1), int(score2)],
-# 			score1 = int(score1),
-# 			score2 = int(score2),
-# 			lineups = [lineup1, lineup2],
-# 			lineup1 = lineup1,
-# 			lineup2 = lineup2,
-# 		)
-# 		matches.append(ma)
-# 		from_id[ma['id']] = ma
 
 def get_conn():
 	conn = sqlite3.connect(os.path.join(ROOT_DIR, 'matches.db'))
@@ -52,6 +28,7 @@ def get_conn():
 
 conn = get_conn()
 
+print 'Loading matches...'
 results = conn.execute('''
 	select id, match_json from (
 		select id, match_json, date
@@ -68,6 +45,7 @@ for row in results:
 	ma['id'] = ma_id
 	from_id[ma_id] = ma
 	matches.append(ma)
+print 'Matches loaded.'
 
 # Discard all matches that do not have 22 distinct players, for whatever
 # reason.
@@ -77,17 +55,6 @@ matches = [
 		m['lineups'][0] + m['lineups'][1]
 	)) == PS_PER_TEAM * 2
 ]
-
-# matches = [
-# 		{
-# 			'lineups': ['a', 'b'],
-# 			'score':   [  0,   3],
-# 		},
-# 		{
-# 			'lineups': ['a', 'b'],
-# 			'score':   [  2,   0],
-# 		},
-# ]
 
 N = len(matches)
 
@@ -143,7 +110,7 @@ assert A.sum() == 0
 ##############################################
 ##############################################
 ##############################################
-res = spsl.lsqr(A, SO - HM, damp=N/1000., show=True)
+res = spsl.lsqr(A, SO - HM, damp=N/100., show=True)
 ##############################################
 ##############################################
 ##############################################
