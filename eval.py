@@ -15,9 +15,7 @@ ROOT_DIR = os.path.dirname(__file__)
 
 PLAYER_TO_TRACK = 'gyorgy-sandor'
 
-N = 500000
-
-H = .35
+N = 50 * 1000
 
 matches = [ ]
 from_id = { }
@@ -61,7 +59,7 @@ N = len(matches)
 plist = [ ]
 p2i = { }
 i2p = { }
-rlist = [ ]
+rlist = [ ] 
 obssuplist = [ ]
 p2e = collections.defaultdict(int)
 
@@ -78,6 +76,11 @@ for mai, ma in enumerate(matches):
 
 	obs_sup = ma['score'][0] - ma['score'][1]
 	obssuplist.append(obs_sup)
+
+# This represents the intercept (e.g. home advantage)
+rlist.append(DEFAULT_RATING)
+INTERCEPT_INDEX = len(rlist) - 1
+i2p[INTERCEPT_INDEX] = '___INTERCEPT___'
 
 # Column vector of ratings.
 R = sp.array(rlist)
@@ -96,13 +99,12 @@ for mai, ma in enumerate(matches):
 		assert len(set(l)) == PS_PER_TEAM
 		for p in l:
 			A[mai, p2i[p]] = li
+	A[mai, INTERCEPT_INDEX] = 1
 
 # Now convert to CSC format for faster operations.
 A = A.tocsr()
 
-HM = sp.ones(N) * H
-
-assert A.sum() == 0
+assert A.sum() == N # Sum all the intercept constants.
 
 ##############################################
 ##############################################
@@ -110,7 +112,7 @@ assert A.sum() == 0
 ##############################################
 ##############################################
 ##############################################
-res = spsl.lsqr(A, SO - HM, damp=N/10000., show=True)
+res = spsl.lsqr(A, SO, damp=N/1000., show=True)
 ##############################################
 ##############################################
 ##############################################
@@ -119,6 +121,12 @@ res = spsl.lsqr(A, SO - HM, damp=N/10000., show=True)
 ##############################################
 
 R = res[0]
+
+fitted = A * R
+R2 = ((fitted - SO.mean())**2).sum() / ((SO - SO.mean())**2).sum()
+
+print 'R2: %.4f' % R2
+print
 
 inds = np.argsort(R)
 
