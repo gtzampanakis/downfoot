@@ -11,48 +11,93 @@ PS_PER_TEAM = 11
 
 NCHUNKS = 25
 
-ROOT_DIR = os.path.dirname(__file__)
-
-PLAYER_TO_TRACK = 'gyorgy-sandor'
+if '__file__' in globals():
+	ROOT_DIR = os.path.dirname(__file__)
+else:
+# In case this script is run through iPython's execfile.
+	ROOT_DIR = '.'
 
 N = 50 * 1000
 
-matches = [ ]
-from_id = { }
+if 'matches' not in globals():
 
-def get_conn():
-	conn = sqlite3.connect(os.path.join(ROOT_DIR, 'matches.db'))
-	return conn
+	matches = [ ]
+	from_id = { }
 
-conn = get_conn()
+	def get_conn():
+		conn = sqlite3.connect(os.path.join(ROOT_DIR, 'matches.db'))
+		return conn
 
-print 'Loading matches...'
-results = conn.execute('''
-	select id, match_json from (
-		select id, match_json, date
-		from matches
-		order by date desc
-		limit ?
-	)
-	order by date
-''', [N])
+	conn = get_conn()
 
-for row in results:
-	ma_id = row[0]
-	ma = json.loads(row[1])
-	ma['id'] = ma_id
-	from_id[ma_id] = ma
-	matches.append(ma)
-print 'Matches loaded.'
+	print 'Loading matches...'
+	results = conn.execute('''
+		select id, match_json from (
+			select id, match_json, date
+			from matches
+			order by date desc
+			limit ?
+		)
+		order by date
+	''', [N])
+
+	for row in results:
+		ma_id = row[0]
+		ma = json.loads(row[1])
+		ma['id'] = ma_id
+		from_id[ma_id] = ma
+		matches.append(ma)
 
 # Discard all matches that do not have 22 distinct players, for whatever
 # reason.
-matches = [
-	m for m in matches
-	if  len(set(
-		m['lineups'][0] + m['lineups'][1]
-	)) == PS_PER_TEAM * 2
-]
+	matches = [
+		m for m in matches
+		if  len(set(
+			m['lineups'][0] + m['lineups'][1]
+		)) == PS_PER_TEAM * 2
+	]
+	print 'Matches loaded.'
+
+teams  = [m['teams'][0] for m in matches]
+teams += [m['teams'][1] for m in matches]
+teams = list(set(teams))
+
+if 0:
+	import networkx as nx
+	g = nx.Graph()
+	for ma in matches:
+		g.add_nodes_from(ma['teams'])
+		n1, n2 = ma['teams']
+		g.add_edge(
+				n1,
+				n2,
+				attr_dict = {
+					'capacity': g.get_edge_data(
+						n1, n2, { }
+					).get('capacity', 0) + 1,
+				}
+		)
+	import pdb; pdb.set_trace()
+	for repi in itertools.count(1):
+		print repi, nx.number_of_nodes(g), nx.number_of_edges(g)
+		min_cut_edges = list(nx.minimum_edge_cut(g))
+		g.remove_edges_from(min_cut_edges)
+		ccs = list(nx.connected_component_subgraphs(g))
+		assert len(ccs) == 2
+		n1, n2 = [ sg.number_of_nodes() for sg in ccs ]
+		if n1 > n2:
+			g = ccs[0]
+		else:
+			g = ccs[1]
+
+if 1:
+	with open('dat.csv', 'wb') as datcsvf:
+		datcsvf.write('gh,ga\n')
+		for ma in matches:
+			datcsvf.write(str(ma['score'][0]))
+			datcsvf.write(',')
+			datcsvf.write(str(ma['score'][1]))
+			datcsvf.write('\n')
 
 N = len(matches)
 
@@ -83,14 +128,14 @@ INTERCEPT_INDEX = len(rlist) - 1
 i2p[INTERCEPT_INDEX] = '___INTERCEPT___'
 
 # Column vector of ratings.
-R = sp.array(rlist)
+B = sp.array(rlist)
 
 # Column vector of observed superiorities.
 SO = sp.array(obssuplist)
 
 # Matrix of appearances. Columns are players, rows are matches.
 # First using lil_matrix because it allows to build incrementally.
-A = sps.lil_matrix((N, R.size))
+A = sps.lil_matrix((N, B.size))
 
 
 for mai, ma in enumerate(matches):
@@ -112,7 +157,7 @@ assert A.sum() == N # Sum all the intercept constants.
 ##############################################
 ##############################################
 ##############################################
-res = spsl.lsqr(A, SO, damp=N/1000., show=True)
+res = spsl.lsqr(A, SO, damp=N/10000., show=True)
 ##############################################
 ##############################################
 ##############################################
@@ -120,25 +165,6 @@ res = spsl.lsqr(A, SO, damp=N/1000., show=True)
 ##############################################
 ##############################################
 
-R = res[0]
+B = res[0]
 
-fitted = A * R
-R2 = ((fitted - SO.mean())**2).sum() / ((SO - SO.mean())**2).sum()
-
-print 'R2: %.4f' % R2
-print
-
-inds = np.argsort(R)
-
-nprinted = 0
-for ind in reversed(inds):
-	exp = p2e[i2p[ind]]
-	if exp >= 0:
-		print '%s    %d    %.3f' % (i2p[ind], exp, R[ind])
-		nprinted += 1
-	if nprinted >= 5000:
-		break
-
-print 'N', N
-
-
+fitted = A * B
