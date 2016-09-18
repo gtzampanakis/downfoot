@@ -1,4 +1,4 @@
-import collections, uuid, json, sqlite3, os, itertools
+import collections, uuid, json, sqlite3, os, itertools, uuid, random
 import numpy as np
 import scipy as sp
 import scipy.optimize as spo
@@ -11,6 +11,8 @@ PS_PER_TEAM = 11
 
 NCHUNKS = 25
 
+RESAMPLE = 1
+
 if '__file__' in globals():
 	ROOT_DIR = os.path.dirname(__file__)
 else:
@@ -19,9 +21,9 @@ else:
 
 N = 50 * 1000
 
-if 'matches' not in globals():
+if 'db_matches' not in globals():
 
-	matches = [ ]
+	db_matches = [ ]
 	from_id = { }
 
 	def get_conn():
@@ -46,17 +48,19 @@ if 'matches' not in globals():
 		ma = json.loads(row[1])
 		ma['id'] = ma_id
 		from_id[ma_id] = ma
-		matches.append(ma)
+		db_matches.append(ma)
 
 # Discard all matches that do not have 22 distinct players, for whatever
 # reason.
-	matches = [
-		m for m in matches
+	db_matches = [
+		m for m in db_matches
 		if  len(set(
 			m['lineups'][0] + m['lineups'][1]
 		)) == PS_PER_TEAM * 2
 	]
 	print 'Matches loaded.'
+
+matches = db_matches
 
 teams  = [m['teams'][0] for m in matches]
 teams += [m['teams'][1] for m in matches]
@@ -77,7 +81,6 @@ if 0:
 					).get('capacity', 0) + 1,
 				}
 		)
-	import pdb; pdb.set_trace()
 	for repi in itertools.count(1):
 		print repi, nx.number_of_nodes(g), nx.number_of_edges(g)
 		min_cut_edges = list(nx.minimum_edge_cut(g))
@@ -90,7 +93,7 @@ if 0:
 		else:
 			g = ccs[1]
 
-if 1:
+if 0:
 	with open('dat.csv', 'wb') as datcsvf:
 		datcsvf.write('gh,ga\n')
 		for ma in matches:
@@ -101,11 +104,19 @@ if 1:
 
 N = len(matches)
 
+if RESAMPLE:
+	new_matches = [ ]
+	for i in xrange(N):
+		new_matches.append(random.choice(matches))
+	matches = new_matches
+
 plist = [ ]
 p2i = { }
 i2p = { }
 rlist = [ ] 
 obssuplist = [ ]
+home_goals = [ ]
+away_goals = [ ]
 p2e = collections.defaultdict(int)
 
 for mai, ma in enumerate(matches):
@@ -121,6 +132,8 @@ for mai, ma in enumerate(matches):
 
 	obs_sup = ma['score'][0] - ma['score'][1]
 	obssuplist.append(obs_sup)
+	home_goals.append(ma['score'][0])
+	away_goals.append(ma['score'][1])
 
 # This represents the intercept (e.g. home advantage)
 rlist.append(DEFAULT_RATING)
@@ -128,14 +141,16 @@ INTERCEPT_INDEX = len(rlist) - 1
 i2p[INTERCEPT_INDEX] = '___INTERCEPT___'
 
 # Column vector of ratings.
-B = sp.array(rlist)
+R = sp.array(rlist)
 
 # Column vector of observed superiorities.
 SO = sp.array(obssuplist)
+HG = sp.array(home_goals)
+AG = sp.array(away_goals)
 
 # Matrix of appearances. Columns are players, rows are matches.
 # First using lil_matrix because it allows to build incrementally.
-A = sps.lil_matrix((N, B.size))
+A = sps.lil_matrix((N, R.size))
 
 
 for mai, ma in enumerate(matches):
@@ -157,7 +172,11 @@ assert A.sum() == N # Sum all the intercept constants.
 ##############################################
 ##############################################
 ##############################################
-res = spsl.lsqr(A, SO, damp=N/10000., show=True)
+res = spsl.lsqr(A, SO, 
+				damp=N/1000.,
+				atol = 1e-12,
+				btol = 1e-12,
+				show=True)
 ##############################################
 ##############################################
 ##############################################
@@ -165,6 +184,43 @@ res = spsl.lsqr(A, SO, damp=N/10000., show=True)
 ##############################################
 ##############################################
 
-B = res[0]
+R = res[0]
 
-fitted = A * B
+fitted = A * R
+
+resid = SO - fitted
+
+order = np.argsort(R)
+
+for nprinted in itertools.count(1):
+	print i2p[order[-nprinted]], '  ', R[order[-nprinted]]
+	if nprinted > 50:
+		break
+
+file_suffix = uuid.uuid4().hex
+rfile = open('ratings/ratings_%s.txt' % file_suffix, 'wb')
+mfile = open('matches_fitted/fitted_%s.txt' % file_suffix, 'wb')
+
+if 1:
+	for ind in reversed(order):
+		towrite = '%s,%.3f' % (i2p[ind], R[ind])
+		rfile.write(towrite)
+		rfile.write('\n')
+
+if 1:
+	for mai, ma in enumerate(matches):
+		towrite = '%s,%s,%s,%s,%s,%.3f' % (
+				ma['date'],
+				ma['teams'][0],
+				ma['teams'][1],
+				ma['score'][0],
+				ma['score'][1],
+				fitted[mai],
+		)
+		mfile.write(towrite)
+		mfile.write('\n')
+
+
+mfile.close()
+rfile.close()
+
