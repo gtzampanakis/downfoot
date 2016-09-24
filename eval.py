@@ -1,4 +1,4 @@
-import collections, uuid, json, sqlite3, os, itertools, uuid, random
+import collections, uuid, json, sqlite3, os, itertools, uuid, random, time
 import ConfigParser
 import numpy as np
 import scipy as sp
@@ -32,6 +32,14 @@ PLOT_SCATTER_TOT_EXP_RESIDUALS = int(config_parser.get(
 
 PRINT_RESID_STD_PER_TOT_EXP_BRACKET = int(config_parser.get(
 									'General', 'print_resid_std_per_tot_exp_bracket'))
+
+WEIGH_BY_TOT_EXP = (
+		float(config_parser.get('General', 'weigh_by_tot_exp_intercept')),
+		float(config_parser.get('General', 'weigh_by_tot_exp_slope')),
+)
+
+if WEIGH_BY_TOT_EXP == (0, 0):
+	WEIGH_BY_TOT_EXP = None
 
 if '__file__' in globals():
 	ROOT_DIR = os.path.dirname(__file__)
@@ -187,19 +195,32 @@ if ALGO == 'lsqr':
 # First using lil_matrix because it allows to build incrementally.
 	A = sps.lil_matrix((N, R.size))
 
+	if WEIGH_BY_TOT_EXP:
+		weights = (tot_exps * WEIGH_BY_TOT_EXP[1] + WEIGH_BY_TOT_EXP[0])
+		weights /= weights.mean()
 
 	for mai, ma in enumerate(matches):
 		for li, l in zip([1,-1], ma['lineups']):
 			assert len(l) == PS_PER_TEAM
 			assert len(set(l)) == PS_PER_TEAM
 			for p in l:
-				A[mai, p2i[p]] = li
-		A[mai, INTERCEPT_INDEX] = 1
+				if WEIGH_BY_TOT_EXP:
+					A[mai, p2i[p]] = li / weights[mai]
+				else:
+					A[mai, p2i[p]] = li
+		if WEIGH_BY_TOT_EXP:
+			A[mai, INTERCEPT_INDEX] = 1./weights[mai]
+		else:
+			A[mai, INTERCEPT_INDEX] = 1
 
 # Now convert to CSC format for faster operations.
 	A = A.tocsr()
 
-	assert A.sum() == N # Sum all the intercept constants.
+	if not WEIGH_BY_TOT_EXP:
+		assert A.sum() == N # Sum all the intercept constants.
+
+	if WEIGH_BY_TOT_EXP:
+		SO = SO / weights
 
 ##############################################
 ##############################################
@@ -218,6 +239,15 @@ if ALGO == 'lsqr':
 ##############################################
 
 	R = res[0]
+
+	if WEIGH_BY_TOT_EXP:
+# Recover original matrices
+		SO = SO * weights
+		for mai, ma in enumerate(matches):
+			for li, l in zip([1,-1], ma['lineups']):
+				for p in l:
+					A[mai, p2i[p]] = li
+			A[mai, INTERCEPT_INDEX] = 1
 
 	fitted = A * R
 
@@ -325,7 +355,7 @@ if PRINT_RESID_STD_PER_TOT_EXP_BRACKET:
 	for xi, yi in zip(x, y):
 		print '%d %.3f' % (xi, yi)
 	
-	print 'intercept: %.3f' % ss.linregress(x, y).intercept
+	print 'intercept: %.8f' % ss.linregress(x, y).intercept
 	print 'slope: %.3e' % ss.linregress(x, y).slope
 
 mfile.close()
