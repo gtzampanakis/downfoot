@@ -1,4 +1,4 @@
-import collections, uuid, json, sqlite3, os, itertools, uuid, random, time
+import collections, uuid, json, sqlite3, os, itertools, uuid, random, time, re
 import ConfigParser
 import numpy as np
 import scipy as sp
@@ -12,6 +12,17 @@ config_parser.read('eval_dixon_coles.conf')
 PS_PER_TEAM = 11
 
 RESAMPLE = int(config_parser.get('General', 'RESAMPLE'))
+
+FILTER_FILE = config_parser.get('General', 'FILTER_FILE')
+
+REGEXPS = [ ]
+
+if FILTER_FILE:
+	filter_file = open(FILTER_FILE, 'r')
+	for line in filter_file:
+		sline = line.strip()
+		REGEXPS.append(re.compile(sline))
+	filter_file.close()
 
 if '__file__' in globals():
 	ROOT_DIR = os.path.dirname(__file__)
@@ -50,6 +61,7 @@ if 'db_matches' not in globals():
 		from_id[ma_id] = ma
 		db_matches.append(ma)
 
+
 # Discard all matches that do not have 22 distinct players, for whatever
 # reason.
 	db_matches = [
@@ -75,7 +87,24 @@ if 'db_matches' not in globals():
 
 	print 'Matches loaded.'
 
-matches = db_matches
+if REGEXPS:
+	matches = [ ]
+	for ma in db_matches:
+		proceed = False
+		for team in ma['teams']:
+			for regexp in REGEXPS:
+				if regexp.search(team):
+					break
+			else:
+				break
+		else:
+			proceed = True
+		if not proceed:
+			continue
+		matches.append(ma)
+else:
+	matches = db_matches
+
 
 teams  = [m['teams'][0] for m in matches]
 teams += [m['teams'][1] for m in matches]
@@ -123,11 +152,11 @@ for mai, ma in enumerate(matches):
 A = A.tocsr()
 B = B.tocsr()
 
-Ta0 = sp.ones(T) # Attack values
-Tb0 = sp.ones(T) # Defence values
+Ta0 = sp.ones(T-1)/(T*15) # Attack values
+Tb0 = sp.ones(T)/(T*15) # Defence values
 g0 = sp.ones(1) # Home advantage
 
-def L(Ta, Tb, g):
+def Lold(Ta, Tb, g):
 	ai = A * Ta # Home attack
 	bj = B * Tb # Away defence
 
@@ -142,35 +171,83 @@ def L(Ta, Tb, g):
 			+ xk * sp.log(lk)
 			- mk
 			+ yk * sp.log(mk)
-	).sum()
+	)
 
-	return L
+	return L.sum()
+
+def L(Ta, Tb, g):
+
+	np.clip(Ta, 1e-8, 100., out = Ta)
+	np.clip(Tb, 1e-8, 100., out = Tb)
+	np.clip(g,  1e-8, 100., out = g )
+
+	ai = A * Ta # Home attack
+	bj = B * Tb # Away defence
+
+	aj = A * Tb # Away attack
+	bi = B * Ta # Home defence
+
+	lk = ai * bj * g[0]
+	mk = aj * bi
+
+	# L = (
+	# 		- lk
+	# 		+ xk * sp.log(lk)
+	# 		- mk
+	# 		+ yk * sp.log(mk)
+	# )
+
+	L = ai # ai is not needed anymore
+	log_lk = np.log(lk, out = bj) # nor is bj
+	log_mk = np.log(mk, out = aj) # nor is aj
+
+	np.negative(lk, out = L)
+	np.add(L, xk * log_lk, out = L)
+	np.subtract(L, mk, out = L)
+	np.add(L, yk * log_mk, out = L)
+
+	return L.sum()
 
 def tomin(x):
 
 	should_print = random.random() < .005
 
-	Ta = x[0    :   T    ]
-	Tb = x[T    :   2*T  ]
-	g  = x[2*T  :   2*T+1]
+	Ta = sp.zeros(T)
+
+	Ta[1:T] = x[ 0      :   T-1   ]
+	Tb 		= x[ T-1    :   2*T-1 ]
+	g  		= x[ 2*T-1  :   2*T   ]
+
+	Ta[0] = 1 - Ta.sum()
 
 	result = -L(Ta, Tb, g)
 
 	if should_print:
-		best_a = np.argsort(Ta)
+		best = np.argsort(Ta/Ta.sum() - Tb/Tb.sum())
 		for nprinted in itertools.count(1):
-			print '%s %.3f' % (i2t[best_a[-nprinted]], Ta[best_a[-nprinted]])
-			if nprinted > min(50, T-1):
+			print '%s %.9f %.9f' % (
+					i2t[best[-nprinted]],
+					Ta[best[-nprinted]],
+					Tb[best[-nprinted]],
+			)
+			if nprinted >= min(70, T):
 				break
 		print 'L = ', -result
 		print
 
 	return result
 
-assert L(Ta0, Tb0, g0) == -tomin(sp.concatenate((Ta0, Tb0, g0)))
+if 1:
+	min_results = spo.minimize(
+			tomin,
+			sp.concatenate((Ta0, Tb0, g0)),
+			method = 'Powell',
+			# options = dict(
+			# 	maxiter = 10**8,
+			# )
+	)
 
-print spo.minimize(
-		tomin,
-		sp.concatenate((Ta0, Tb0, g0)),
-		method = 'Nelder-Mead',
-)
+	print 'T:', T
+	print 'N:', N
+	print min_results
+
