@@ -177,9 +177,9 @@ def Lold(Ta, Tb, g):
 
 def L(Ta, Tb, g):
 
-	np.clip(Ta, 1e-8, 100., out = Ta)
-	np.clip(Tb, 1e-8, 100., out = Tb)
-	np.clip(g,  1e-8, 100., out = g )
+	np.clip(Ta, 1e-8, 10., out = Ta)
+	np.clip(Tb, 1e-8, 10., out = Tb)
+	np.clip(g,  1e-8, 10., out = g )
 
 	ai = A * Ta # Home attack
 	bj = B * Tb # Away defence
@@ -210,7 +210,7 @@ def L(Ta, Tb, g):
 
 def tomin(x):
 
-	should_print = random.random() < .005
+	should_print = random.random() < .05
 
 	Ta = sp.zeros(T)
 
@@ -218,20 +218,21 @@ def tomin(x):
 	Tb 		= x[ T-1    :   2*T-1 ]
 	g  		= x[ 2*T-1  :   2*T   ]
 
-	Ta[0] = 1 - Ta.sum()
+	Ta[0] = T - Ta.sum()
 
 	result = -L(Ta, Tb, g)
 
 	if should_print:
 		best = np.argsort(Ta/Ta.sum() - Tb/Tb.sum())
 		for nprinted in itertools.count(1):
-			print '%s %.9f %.9f' % (
-					i2t[best[-nprinted]],
+			print '%.3f %.3f %s' % (
 					Ta[best[-nprinted]],
 					Tb[best[-nprinted]],
+					i2t[best[-nprinted]],
 			)
 			if nprinted >= min(70, T):
 				break
+		print 'G = ', g[0]
 		print 'L = ', -result
 		print
 
@@ -241,7 +242,7 @@ if 1:
 	min_results = spo.minimize(
 			tomin,
 			sp.concatenate((Ta0, Tb0, g0)),
-			method = 'Powell',
+			method = 'CG',
 			# options = dict(
 			# 	maxiter = 10**8,
 			# )
