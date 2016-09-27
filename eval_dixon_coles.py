@@ -1,4 +1,4 @@
-import collections, uuid, json, sqlite3, os, itertools, uuid, random, time, re
+import collections, uuid, json, sqlite3, os, itertools, uuid, random, time, re, datetime
 import ConfigParser
 import numpy as np
 import scipy as sp
@@ -17,11 +17,18 @@ FILTER_FILE = config_parser.get('General', 'FILTER_FILE')
 
 REGEXPS = [ ]
 
+CENTER_DATE = config_parser.get('General', 'CENTER_DATE')
+
+if CENTER_DATE:
+	CENTER_DATE = datetime.date(*[int(s) for s in CENTER_DATE.split('-')])
+	KSI = float(config_parser.get('General', 'KSI'))
+
 if FILTER_FILE:
 	filter_file = open(FILTER_FILE, 'r')
 	for line in filter_file:
 		sline = line.strip()
-		REGEXPS.append(re.compile(sline))
+		if sline:
+			REGEXPS.append(re.compile(sline))
 	filter_file.close()
 
 if '__file__' in globals():
@@ -127,9 +134,11 @@ t2i = { }
 i2t = { }
 xk = sp.zeros(N)
 yk = sp.zeros(N)
+dates = [ ]
 for mai, ma in enumerate(matches):
 	home_teams.append(ma['teams'][0])
 	away_teams.append(ma['teams'][1])
+	dates.append(datetime.date(*[int(s) for s in ma['date'].split('-')]))
 	xk[mai] = ma['score'][0]
 	yk[mai] = ma['score'][1]
 	for i in [0, 1]:
@@ -138,6 +147,8 @@ for mai, ma in enumerate(matches):
 			teams.append(i)
 			t2i[team] = len(teams) - 1
 			i2t[len(teams) - 1] = team
+date_distances = sp.array([abs((CENTER_DATE - d).days) for d in dates])
+weights = sp.exp(-KSI * date_distances)
 
 T = len(teams)
 
@@ -152,8 +163,8 @@ for mai, ma in enumerate(matches):
 A = A.tocsr()
 B = B.tocsr()
 
-Ta0 = sp.ones(T-1)/(T*15) # Attack values
-Tb0 = sp.ones(T)/(T*15) # Defence values
+Ta0 = sp.ones(T-1)/(T) # Attack values
+Tb0 = sp.ones(T)/(T) # Defence values
 g0 = sp.ones(1) # Home advantage
 
 def Lold(Ta, Tb, g):
@@ -190,55 +201,63 @@ def L(Ta, Tb, g):
 	lk = ai * bj * g[0]
 	mk = aj * bi
 
-	# L = (
-	# 		- lk
-	# 		+ xk * sp.log(lk)
-	# 		- mk
-	# 		+ yk * sp.log(mk)
-	# )
+	L = (
+			- lk
+			+ xk * sp.log(lk)
+			- mk
+			+ yk * sp.log(mk)
+	)
 
-	L = ai # ai is not needed anymore
-	log_lk = np.log(lk, out = bj) # nor is bj
-	log_mk = np.log(mk, out = aj) # nor is aj
+	# L = ai # ai is not needed anymore
+	# log_lk = np.log(lk, out = bj) # nor is bj
+	# log_mk = np.log(mk, out = aj) # nor is aj
 
-	np.negative(lk, out = L)
-	np.add(L, xk * log_lk, out = L)
-	np.subtract(L, mk, out = L)
-	np.add(L, yk * log_mk, out = L)
+	# np.negative(lk, out = L)
+	# np.add(L, xk * log_lk, out = L)
+	# np.subtract(L, mk, out = L)
+	# np.add(L, yk * log_mk, out = L)
 
-	return L.sum()
+	return (L*weights).sum()
 
 def tomin(x):
 
-	should_print = random.random() < .05
+	should_print = random.random() < .95
 
+	Ta, Tb, g = decompose_x(x)
+
+	result = -L(Ta, Tb, g)
+
+	if should_print:
+		print 'L = %.3f' % -result
+		print_results(Ta, Tb, g)
+		print
+
+	return result
+
+def print_results(Ta, Tb, g):
+	best = np.argsort(Ta/Ta.sum() - Tb/Tb.sum())
+	for nprinted in itertools.count(1):
+		print '%.3f %.3f %s' % (
+				Ta[best[-nprinted]],
+				Tb[best[-nprinted]],
+				i2t[best[-nprinted]],
+		)
+		if nprinted >= min(70, T):
+			break
+	print 'G = %.3f' % g[0]
+	print
+
+def decompose_x(x):
 	Ta = sp.zeros(T)
 
 	Ta[1:T] = x[ 0      :   T-1   ]
 	Tb 		= x[ T-1    :   2*T-1 ]
 	g  		= x[ 2*T-1  :   2*T   ]
-
 	Ta[0] = T - Ta.sum()
 
-	result = -L(Ta, Tb, g)
+	return Ta, Tb, g
 
-	if should_print:
-		best = np.argsort(Ta/Ta.sum() - Tb/Tb.sum())
-		for nprinted in itertools.count(1):
-			print '%.3f %.3f %s' % (
-					Ta[best[-nprinted]],
-					Tb[best[-nprinted]],
-					i2t[best[-nprinted]],
-			)
-			if nprinted >= min(70, T):
-				break
-		print 'G = ', g[0]
-		print 'L = ', -result
-		print
-
-	return result
-
-if 1:
+def optimize():
 	min_results = spo.minimize(
 			tomin,
 			sp.concatenate((Ta0, Tb0, g0)),
@@ -248,7 +267,12 @@ if 1:
 			# )
 	)
 
+	opt = min_results['x']
+
+	print_results(*decompose_x(opt))
+
 	print 'T:', T
 	print 'N:', N
 	print min_results
 
+optimize()
