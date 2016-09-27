@@ -134,11 +134,9 @@ t2i = { }
 i2t = { }
 xk = sp.zeros(N)
 yk = sp.zeros(N)
-dates = [ ]
 for mai, ma in enumerate(matches):
 	home_teams.append(ma['teams'][0])
 	away_teams.append(ma['teams'][1])
-	dates.append(datetime.date(*[int(s) for s in ma['date'].split('-')]))
 	xk[mai] = ma['score'][0]
 	yk[mai] = ma['score'][1]
 	for i in [0, 1]:
@@ -147,8 +145,8 @@ for mai, ma in enumerate(matches):
 			teams.append(i)
 			t2i[team] = len(teams) - 1
 			i2t[len(teams) - 1] = team
-date_distances = sp.array([abs((CENTER_DATE - d).days) for d in dates])
-weights = sp.exp(-KSI * date_distances)
+
+weights = None
 
 T = len(teams)
 
@@ -167,26 +165,7 @@ Ta0 = sp.ones(T-1)/(T) # Attack values
 Tb0 = sp.ones(T)/(T) # Defence values
 g0 = sp.ones(1) # Home advantage
 
-def Lold(Ta, Tb, g):
-	ai = A * Ta # Home attack
-	bj = B * Tb # Away defence
-
-	aj = A * Tb # Away attack
-	bi = B * Ta # Home defence
-
-	lk = ai * bj * g[0]
-	mk = aj * bi
-
-	L = (
-			- lk
-			+ xk * sp.log(lk)
-			- mk
-			+ yk * sp.log(mk)
-	)
-
-	return L.sum()
-
-def L(Ta, Tb, g):
+def L(Ta, Tb, g, ret_unweighted = False):
 
 	np.clip(Ta, 1e-8, 10., out = Ta)
 	np.clip(Tb, 1e-8, 10., out = Tb)
@@ -208,16 +187,10 @@ def L(Ta, Tb, g):
 			+ yk * sp.log(mk)
 	)
 
-	# L = ai # ai is not needed anymore
-	# log_lk = np.log(lk, out = bj) # nor is bj
-	# log_mk = np.log(mk, out = aj) # nor is aj
-
-	# np.negative(lk, out = L)
-	# np.add(L, xk * log_lk, out = L)
-	# np.subtract(L, mk, out = L)
-	# np.add(L, yk * log_mk, out = L)
-
-	return (L*weights).sum()
+	if not ret_unweighted:
+		return (L*(weights/weights.sum())).sum()
+	else:
+		return L
 
 def tomin(x):
 
@@ -226,11 +199,6 @@ def tomin(x):
 	Ta, Tb, g = decompose_x(x)
 
 	result = -L(Ta, Tb, g)
-
-	if should_print:
-		print 'L = %.3f' % -result
-		print_results(Ta, Tb, g)
-		print
 
 	return result
 
@@ -257,7 +225,19 @@ def decompose_x(x):
 
 	return Ta, Tb, g
 
-def optimize():
+def optimize(leave_out_index = None, interactive_predict = False):
+
+	global weights
+
+	dates = [ ]
+	for mai, ma in enumerate(matches):
+		dates.append(datetime.date(*[int(s) for s in ma['date'].split('-')]))
+	date_distances = sp.array([abs((CENTER_DATE - d).days) for d in dates])
+	weights = sp.exp(-KSI * date_distances)
+
+	if leave_out_index is not None:
+		weights[leave_out_index] = 0
+
 	min_results = spo.minimize(
 			tomin,
 			sp.concatenate((Ta0, Tb0, g0)),
@@ -269,10 +249,89 @@ def optimize():
 
 	opt = min_results['x']
 
-	print_results(*decompose_x(opt))
+	if leave_out_index is None:
+		print_results(*decompose_x(opt))
 
 	print 'T:', T
 	print 'N:', N
 	print min_results
 
-optimize()
+	if leave_out_index is not None:
+		unweighted = L(*decompose_x(opt), ret_unweighted = True)
+		return unweighted[leave_out_index]
+
+	if interactive_predict:
+		import scipy.stats as ss
+
+		Ta, Tb, g = decompose_x(opt)
+
+		while True:
+			inp = raw_input('> ').strip()
+			if inp == 'exit':
+				break
+			team1_filt, team2_filt = inp.split()
+			team1_filt = team1_filt.strip()
+			team2_filt = team2_filt.strip()
+
+			for team in t2i:
+				if team1_filt in team:
+					team1 = team
+					break
+			else:
+				print 'Not found: %s' % team1_filt
+				continue
+
+			for team in t2i:
+				if team2_filt in team:
+					team2 = team
+					break
+			else:
+				print 'Not found: %s' % team2_filt
+				continue
+
+			home_l = Ta[t2i[team1]] * Tb[t2i[team2]] * g[0]
+			away_l = Ta[t2i[team2]] * Tb[t2i[team1]]
+
+			ps = sp.array([0., 0., 0.])
+			ps_ou = sp.array([0., 0.])
+			for score1, score2 in itertools.product(range(12), repeat=2):
+				p = (
+						  ss.poisson(home_l).pmf(score1)
+						* ss.poisson(away_l).pmf(score2)
+				)
+				if score1 > score2:
+					ps[0] += p
+				elif score1 == score2:
+					ps[1] += p
+				elif score1 < score2:
+					ps[2] += p
+				if score1 + score2 > 2.5:
+					ps_ou[0] += p
+				else:
+					ps_ou[1] += p
+			ps /= ps.sum()
+			ps = 1/ps
+			ps_ou /= ps_ou.sum()
+			ps_ou = 1/ps_ou
+
+			print '%s - %s: ML: %.2f - %.2f - %.2f OU: %.2f - %.2f' % (
+					team1, team2,
+					ps[0], ps[1], ps[2],
+					ps_ou[0], ps_ou[1]
+			)
+
+
+if 0:
+	lools = [ ]
+	for mai, ma in enumerate(matches):
+		result = optimize(mai)
+		print '%s/%s: LOOL: %.3f' % (
+				mai + 1,
+				len(matches),
+				result
+		)
+		lools.append(result)
+
+	print sp.mean(lools)
+
+optimize(interactive_predict = True)
