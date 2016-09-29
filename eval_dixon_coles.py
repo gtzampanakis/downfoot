@@ -213,6 +213,7 @@ def print_results(Ta, Tb, g):
 		if nprinted >= min(70, T):
 			break
 	print 'G = %.3f' % g[0]
+	print 'L = %.3f' % L(Ta, Tb, g)
 	print
 
 def decompose_x(x):
