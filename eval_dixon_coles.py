@@ -165,12 +165,7 @@ Ta0 = sp.ones(T-1)/(T) # Attack values
 Tb0 = sp.ones(T)/(T) # Defence values
 g0 = sp.ones(1) # Home advantage
 
-def L(Ta, Tb, g, ret_unweighted = False):
-
-	np.clip(Ta, 1e-8, 10., out = Ta)
-	np.clip(Tb, 1e-8, 10., out = Tb)
-	np.clip(g,  1e-8, 10., out = g )
-
+def lk_mk(Ta, Tb, g):
 	ai = A * Ta # Home attack
 	bj = B * Tb # Away defence
 
@@ -179,6 +174,17 @@ def L(Ta, Tb, g, ret_unweighted = False):
 
 	lk = ai * bj * g[0]
 	mk = aj * bi
+
+	return lk, mk
+
+
+def L(Ta, Tb, g, ret_unweighted = False):
+
+	np.clip(Ta, 1e-8, 10., out = Ta)
+	np.clip(Tb, 1e-8, 10., out = Tb)
+	np.clip(g,  1e-8, 10., out = g )
+
+	lk, mk = lk_mk(Ta, Tb, g)
 
 	L = (
 			- lk
@@ -215,6 +221,16 @@ def print_results(Ta, Tb, g):
 	print 'G = %.3f' % g[0]
 	print 'L = %.3f' % L(Ta, Tb, g)
 	print
+
+def print_distr_per_quantile(Ta, Tb, g):
+	lk, mk = lk_mk(Ta, Tb, g)
+	pcs = np.percentile(lk, sp.linspace(0, 100, 15))
+	for l, h in zip(pcs[:-1], pcs[1:]):
+		subs = (lk >= l) & (lk < h)
+		n = subs.sum()
+		m = xk[subs].mean()
+		v = xk[subs].var()
+		print '%.2f: n: %s m: %.2f v: %.2f' % ((h+l)/2., n, m, v)
 
 def decompose_x(x):
 	Ta = sp.zeros(T)
@@ -321,6 +337,8 @@ def optimize(leave_out_index = None, interactive_predict = False):
 					ps_ou[0], ps_ou[1]
 			)
 
+	return opt
+
 
 if 0:
 	lools = [ ]
@@ -335,4 +353,4 @@ if 0:
 
 	print sp.mean(lools)
 
-optimize(interactive_predict = True)
+opt = optimize(interactive_predict = False)
