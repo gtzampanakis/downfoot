@@ -13,6 +13,8 @@ PS_PER_TEAM = 11
 
 RESAMPLE = int(config_parser.get('General', 'RESAMPLE'))
 
+INTERACTIVE = int(config_parser.get('General', 'INTERACTIVE'))
+
 FILTER_FILE = config_parser.get('General', 'FILTER_FILE')
 
 REGEXPS = [ ]
@@ -164,6 +166,7 @@ B = B.tocsr()
 Ta0 = sp.ones(T-1)/(T) # Attack values
 Tb0 = sp.ones(T)/(T) # Defence values
 g0 = sp.ones(1) # Home advantage
+rho0 = sp.zeros(1)
 
 def lk_mk(Ta, Tb, g):
 	ai = A * Ta # Home attack
@@ -177,16 +180,42 @@ def lk_mk(Ta, Tb, g):
 
 	return lk, mk
 
+def tau(lk, mk, xk, yk, rho):
+	assert xk.shape == yk.shape
+	assert yk.shape == lk.shape
+	assert lk.shape == mk.shape
 
-def L(Ta, Tb, g, ret_unweighted = False):
+	t = sp.ones(xk.shape)
 
-	np.clip(Ta, 1e-8, 10., out = Ta)
-	np.clip(Tb, 1e-8, 10., out = Tb)
-	np.clip(g,  1e-8, 10., out = g )
+	b = (xk==0) & (yk==0)
+	t[b] = (1 - (lk * mk) * rho)[b]
+
+	b = (xk==0) & (yk==1)
+	t[b] = (1 + lk * rho)[b]
+
+	b = (xk==1) & (yk==0)
+	t[b] = (1 + mk * rho)[b]
+
+	b = (xk==1) & (yk==1)
+	t[b] = 1 - rho
+
+	np.clip(t, 1e-8, 10., out = t)
+
+	return sp.log(t)
+	
+
+def L(Ta, Tb, g, rho, ret_unweighted = False):
+
+	np.clip(Ta,  1e-8, 10., out = Ta)
+	np.clip(Tb,  1e-8, 10., out = Tb)
+	np.clip(g,   1e-8, 10., out = g )
 
 	lk, mk = lk_mk(Ta, Tb, g)
 
+	t = tau(lk, mk, xk, yk, rho)
+
 	L = (
+			+ t
 			- lk
 			+ xk * sp.log(lk)
 			- mk
@@ -202,13 +231,13 @@ def tomin(x):
 
 	should_print = random.random() < .95
 
-	Ta, Tb, g = decompose_x(x)
+	Ta, Tb, g, rho = decompose_x(x)
 
-	result = -L(Ta, Tb, g)
+	result = -L(Ta, Tb, g, rho)
 
 	return result
 
-def print_results(Ta, Tb, g):
+def print_results(Ta, Tb, g, rho):
 	best = np.argsort(Ta/Ta.sum() - Tb/Tb.sum())
 	for nprinted in itertools.count(1):
 		print '%.3f %.3f %s' % (
@@ -218,8 +247,9 @@ def print_results(Ta, Tb, g):
 		)
 		if nprinted >= min(70, T):
 			break
-	print 'G = %.3f' % g[0]
-	print 'L = %.3f' % L(Ta, Tb, g)
+	print 'G   = %+.3f' % g[0]
+	print 'rho = %+.3f' % rho[0]
+	print 'L   = %+.3f' % L(Ta, Tb, g, rho)
 	print
 
 def print_distr_per_quantile(Ta, Tb, g):
@@ -238,9 +268,10 @@ def decompose_x(x):
 	Ta[1:T] = x[ 0      :   T-1   ]
 	Tb 		= x[ T-1    :   2*T-1 ]
 	g  		= x[ 2*T-1  :   2*T   ]
+	rho     = x[ 2*T    :   2*T+1 ]
 	Ta[0] = T - Ta.sum()
 
-	return Ta, Tb, g
+	return Ta, Tb, g, rho
 
 def optimize(leave_out_index = None, interactive_predict = False):
 
@@ -257,7 +288,7 @@ def optimize(leave_out_index = None, interactive_predict = False):
 
 	min_results = spo.minimize(
 			tomin,
-			sp.concatenate((Ta0, Tb0, g0)),
+			sp.concatenate((Ta0, Tb0, g0, rho0)),
 			method = 'CG',
 			# options = dict(
 			# 	maxiter = 10**8,
@@ -280,12 +311,15 @@ def optimize(leave_out_index = None, interactive_predict = False):
 	if interactive_predict:
 		import scipy.stats as ss
 
-		Ta, Tb, g = decompose_x(opt)
+		Ta, Tb, g, rho = decompose_x(opt)
 
 		while True:
 			inp = raw_input('> ').strip()
-			if inp == 'exit':
+			if inp in ('exit', 'quit'):
 				break
+			if len(inp.split()) != 2:
+				print 'Unrecognised command'
+				continue
 			team1_filt, team2_filt = inp.split()
 			team1_filt = team1_filt.strip()
 			team2_filt = team2_filt.strip()
@@ -316,6 +350,13 @@ def optimize(leave_out_index = None, interactive_predict = False):
 						  ss.poisson(home_l).pmf(score1)
 						* ss.poisson(away_l).pmf(score2)
 				)
+				p *= (sp.exp(tau(
+					sp.array([home_l]), 
+					sp.array([away_l]), 
+					sp.array([score1]), 
+					sp.array([score2]), 
+					rho)
+				))[0]
 				if score1 > score2:
 					ps[0] += p
 				elif score1 == score2:
@@ -353,4 +394,4 @@ if 0:
 
 	print sp.mean(lools)
 
-opt = optimize(interactive_predict = False)
+opt = optimize(interactive_predict = INTERACTIVE)
